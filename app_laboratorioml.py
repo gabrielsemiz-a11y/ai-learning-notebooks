@@ -5,8 +5,16 @@ import plotly.express as px
 import plotly.graph_objects as go
 import os
 import requests
+import re
 import warnings
 warnings.filterwarnings('ignore')
+
+# Fragmento reactivo para evaluación continua en vivo sin parpadeos (Streamlit >= 1.37)
+if hasattr(st, 'fragment'):
+    reactive_block = st.fragment
+else:
+    def reactive_block(f):
+        return f
 
 from scipy.stats import chi2_contingency, f_oneway
 from sklearn.model_selection import train_test_split, StratifiedKFold, KFold
@@ -90,6 +98,8 @@ if "historial_reg" not in st.session_state:
     st.session_state.historial_reg = []
 if "veredicto_llm" not in st.session_state:
     st.session_state.veredicto_llm = ""
+if "decision_threshold" not in st.session_state:
+    st.session_state["decision_threshold"] = 0.30
 
 MODEL_HELP = {
     "Regresión Logística": "📌 **Para qué sirve:** Clasificador lineal probabilístico basado en la función sigmoide. Es explicable, veloz y el estándar para calibrar umbrales de decisión.",
@@ -98,12 +108,14 @@ MODEL_HELP = {
     "Random Forest (Clasificador)": "📌 **Para qué sirve:** Combina decenas de árboles de decisión independientes (Bagging). Reduce drásticamente el sobreajuste y ofrece alta precisión.",
     "HistGradientBoosting (Clasificador)": "📌 **Para qué sirve:** Árboles secuenciales por potenciación de gradiente optimizados con histogramas. Altísima velocidad y precisión superior en tablas.",
     "Red Neuronal (MLP Classifier)": "📌 **Para qué sirve:** Perceptrón multicapa capaz de modelar relaciones no lineales intrincadas entre múltiples variables.",
+    "Red Neuronal (TensorFlow/Keras Clasificador)": "📌 **Para qué sirve:** Red neuronal densa profunda en Keras con salida sigmoide y optimización Adam.",
     "Regresión Lineal Penalizada (Ridge)": "📌 **Para qué sirve:** Estima valores numéricos continuos aplicando regularización L2 para evitar coeficientes desmedidos o colinealidad.",
     "K-Vecinos Cercanos (KNN Regresor)": "📌 **Para qué sirve:** Estima un valor continuo promediando los valores reales de los 'K' registros más parecidos.",
     "Árbol de Decisión (Regresor)": "📌 **Para qué sirve:** Segmenta datos en hojas terminales y predice el promedio numérico del grupo correspondiente.",
     "Random Forest (Regresor)": "📌 **Para qué sirve:** Promedia las predicciones de múltiples árboles para estimar magnitudes con mínima varianza.",
     "HistGradientBoosting (Regresor)": "📌 **Para qué sirve:** Boosting de alta velocidad para estimación numérica continua de máxima precisión.",
-    "Red Neuronal (MLP Regressor)": "📌 **Para qué sirve:** Red neuronal multicapa con salida lineal para ajustar curvas y funciones continuas complejas."
+    "Red Neuronal (MLP Regressor)": "📌 **Para qué sirve:** Red neuronal multicapa con salida lineal para ajustar curvas y funciones continuas complejas.",
+    "Red Neuronal (TensorFlow/Keras Regresor)": "📌 **Para qué sirve:** Red neuronal densa profunda en Keras con salida lineal para regresión continua."
 }
 
 tabs = st.tabs([
@@ -130,9 +142,12 @@ with tabs[0]:
                 st.session_state["dataset_name"] = uploaded_file.name
                 st.session_state["target_col"] = None
                 st.session_state["selected_features"] = []
+                if "ms_features_selector" in st.session_state:
+                    del st.session_state["ms_features_selector"]
                 st.session_state["df_clean"] = None
                 st.session_state["trained_model"] = None
                 st.session_state["test_outputs"] = None
+                st.session_state["ia_selection_explanation"] = ""
                 st.success(f"Archivo cargado correctamente: `{uploaded_file.name}`")
                 st.rerun()
 
@@ -145,9 +160,12 @@ with tabs[0]:
                 st.session_state["dataset_name"] = "Ninguno"
                 st.session_state["target_col"] = None
                 st.session_state["selected_features"] = []
+                if "ms_features_selector" in st.session_state:
+                    del st.session_state["ms_features_selector"]
                 st.session_state["df_clean"] = None
                 st.session_state["trained_model"] = None
                 st.session_state["test_outputs"] = None
+                st.session_state["ia_selection_explanation"] = ""
                 st.info("Dataset eliminado de memoria.")
                 st.rerun()
 
@@ -336,17 +354,22 @@ with tabs[1]:
 
         with col_t3:
             if es_clasificacion:
-                st.info(f"🏷️ **Modo Clasificación Activo**\n\nClases detectadas en `{target_col}`: **{n_unicos}**")
+                st.info(f"""🏷️ **Modo Clasificación Activo**
+
+Clases detectadas en `{target_col}`: **{n_unicos}**""")
                 if n_unicos > 20:
                     st.warning("⚠️ Esta columna tiene muchos valores distintos. ¿Seguro que no es un problema de Regresión?")
             else:
                 if not es_numerica_target:
                     st.error("❌ Para Regresión (estimar un valor), la variable objetivo debe ser numérica.")
                     st.stop()
-                st.info(f"📈 **Modo Regresión Activo**\n\nPromedio de `{target_col}`: **{df_clean[target_col].mean():,.2f}**")
+                st.info(f"""📈 **Modo Regresión Activo**
+
+Promedio de `{target_col}`: **{df_clean[target_col].mean():,.2f}**""")
 
         st.divider()
 
+        # Partición estratificada (o regular) para filtros estadísticos sin sesgo
         candidatas_todas = [c for c in columnas_totales if c != target_col and c.lower() not in ['id', 'index', 'unnamed: 0']]
         if es_clasificacion:
             le_target = LabelEncoder()
@@ -367,6 +390,7 @@ with tabs[1]:
         num_cands = [c for c in candidatas_todas if pd.api.types.is_numeric_dtype(df_clean[c])]
         cat_cands = [c for c in candidatas_todas if c not in num_cands]
 
+        # --- SECCIÓN 3: FILTROS ESTADÍSTICOS DE ASOCIACIÓN ---
         st.subheader("3. Filtros Estadísticos de Asociación (Calculados en Entrenamiento)")
         col_stat_num, col_stat_cat = st.columns(2)
 
@@ -453,41 +477,168 @@ with tabs[1]:
 
         st.divider()
 
+        # --- SECCIÓN 4: SELECCIÓN DE PREDICTORAS (DESLIZANTE + AUTO-SELECCIÓN ESTADÍSTICA + IA OLLAMA) ---
         st.subheader("4. Selección de Variables Predictoras para los Modelos")
-        
-        default_cands = candidatas_todas[:min(5, len(candidatas_todas))]
-        current_selection = st.session_state.get("selected_features", default_cands)
-        current_selection = [c for c in current_selection if c in candidatas_todas]
-        if not current_selection:
-            current_selection = default_cands
 
-        col_sel_f1, col_sel_f2 = st.columns([3, 1])
+        # Inicialización del estado de variables seleccionadas
+        if "selected_features" not in st.session_state:
+            st.session_state["selected_features"] = candidatas_todas[:min(5, len(candidatas_todas))]
+        if "ms_features_selector" not in st.session_state:
+            st.session_state["ms_features_selector"] = st.session_state["selected_features"]
+
+        st.session_state["ms_features_selector"] = [c for c in st.session_state["ms_features_selector"] if c in candidatas_todas]
+        if not st.session_state["ms_features_selector"]:
+            st.session_state["ms_features_selector"] = candidatas_todas[:min(5, len(candidatas_todas))]
+        st.session_state["selected_features"] = st.session_state["ms_features_selector"]
+
+        # Puntuación unificada de asociación
+        scores_asoc = {}
+        if num_cands:
+            temp_num_a = df_train_stat[num_cands].copy()
+            temp_num_a["__T__"] = y_train_stat
+            rho_abs = temp_num_a.corr(method="spearman")["__T__"].drop("__T__").abs().fillna(0)
+            for c in num_cands:
+                scores_asoc[c] = float(rho_abs.get(c, 0.0))
+
+        if es_clasificacion:
+            for c in cat_cands:
+                tab = pd.crosstab(df_train_stat[c].fillna("Sin dato"), y_train_stat)
+                chi2, _, _, _ = chi2_contingency(tab)
+                div = tab.to_numpy().sum() * min(tab.shape[0] - 1, tab.shape[1] - 1)
+                v_cram = np.sqrt(chi2 / div) if div > 0 else 0.0
+                scores_asoc[c] = float(v_cram)
+        else:
+            for c in cat_cands:
+                grupos = [g.dropna().values for _, g in df_train_stat.groupby(c)[target_col] if len(g.dropna()) > 1]
+                f_stat, _ = f_oneway(*grupos) if len(grupos) >= 2 else (0.0, 1.0)
+                scores_asoc[c] = float(f_stat / (1.0 + f_stat)) if f_stat > 0 else 0.0
+
+        ranking_estadistico = sorted(candidatas_todas, key=lambda c: scores_asoc.get(c, 0.0), reverse=True)
+
+        col_sel_f1, col_sel_f2 = st.columns([1.8, 1.2])
+
+        with col_sel_f2:
+            st.markdown("##### 🎛️ Auto-Selección Inteligente")
+            min_k = min(3, len(candidatas_todas))
+            max_k = len(candidatas_todas)
+            k_features_auto = st.slider(
+                "Cantidad de variables a seleccionar:",
+                min_value=min_k,
+                max_value=max_k,
+                value=min(5, max_k),
+                step=1,
+                help="Define cuántas variables predictivas incluir automáticamente en el cajón de entrenamiento."
+            )
+
+            c_btn1, c_btn2 = st.columns(2)
+            with c_btn1:
+                if st.button("🤖 Por Estadística", help=f"Elige las mejores {k_features_auto} variables con mayor Spearman/Cramér/ANOVA"):
+                    mejores = ranking_estadistico[:k_features_auto]
+                    st.session_state["ms_features_selector"] = mejores
+                    st.session_state["selected_features"] = mejores
+                    st.session_state["ia_selection_explanation"] = f"Seleccionadas las **{len(mejores)}** variables con mayor asociación con `{target_col}`."
+                    st.success(f"¡Asignadas {len(mejores)} variables al cajón!")
+                    st.rerun()
+
+            with c_btn2:
+                btn_ia = st.button("🧠 Con IA (Ollama)", help=f"Consulta al LLM local para evaluar y recomendar las mejores {k_features_auto} variables")
+
+            with st.expander("⚙️ Configuración Ollama para Selección", expanded=False):
+                modelos_ollama_sel = ["deepseek-r1:1.5b", "qwen2.5:7b", "llama3.1:8b", "qwen3:4b", "gemma3:4b", "phi4-mini"]
+                modelo_ia_feat = st.selectbox("Modelo Ollama:", modelos_ollama_sel, key="sb_model_ia_feat")
+                url_ia_feat = st.text_input("URL Ollama:", value="http://localhost:11434", key="txt_url_ia_feat")
+
+            if btn_ia:
+                with st.spinner(f"Analizando variables con {modelo_ia_feat}..."):
+                    resumen_vars = []
+                    for c in candidatas_todas:
+                        t_str = "Numérica" if c in num_cands else "Categórica"
+                        sc = scores_asoc.get(c, 0.0)
+                        nu = df_clean[c].nunique()
+                        resumen_vars.append(f"- '{c}' (Tipo: {t_str}, Asociación: {sc:.3f}, Clases/Valores: {nu})")
+
+                    resumen_prompt = "\n".join(resumen_vars)
+                    tarea_desc = "Clasificación" if es_clasificacion else "Regresión"
+                    prompt_sel_ia = f"""Eres un científico de datos senior.
+Objetivo: Predecir '{target_col}' ({tarea_desc}).
+Debes elegir exactamente {k_features_auto} variables predictoras de la siguiente lista de variables candidatas:
+
+{resumen_prompt}
+
+Criterios:
+1. Prioriza variables con mayor fuerza de asociación estadística.
+2. Evita redundancias o variables que aporten información duplicada entre sí.
+3. Evita identificadores o variables con posible fuga de información.
+
+Responde ÚNICAMENTE en este formato:
+SELECCIÓN: [nombre_exacto_columna_1, nombre_exacto_columna_2, ...]
+EXPLICACIÓN: <Explicación técnica en 2 o 3 oraciones de por qué elegiste estas {k_features_auto} variables.>"""
+
+                    try:
+                        resp_ia = requests.post(
+                            f"{url_ia_feat.rstrip('/')}/api/generate",
+                            json={
+                                "model": modelo_ia_feat,
+                                "prompt": prompt_sel_ia,
+                                "stream": False,
+                                "options": {"num_predict": 300, "temperature": 0.2}
+                            },
+                            timeout=120
+                        )
+                        if resp_ia.status_code == 200:
+                            texto_resp = resp_ia.json().get("response", "")
+                            
+                            cols_extraidas = []
+                            cands_map = {c.lower(): c for c in candidatas_todas}
+                            
+                            # 1. Extracción de corchetes
+                            corchetes = re.findall(r'\[(.*?)\]', texto_resp, re.DOTALL)
+                            for b in corchetes:
+                                for token in b.split(","):
+                                    limpio = token.strip().strip("'\"\`")
+                                    if limpio.lower() in cands_map and cands_map[limpio.lower()] not in cols_extraidas:
+                                        cols_extraidas.append(cands_map[limpio.lower()])
+
+                            # 2. Extracción por nombre directo si la lista está incompleta
+                            if len(cols_extraidas) < k_features_auto:
+                                for c in candidatas_todas:
+                                    if re.search(r'' + re.escape(c) + r'', texto_resp, re.I) and c not in cols_extraidas:
+                                        cols_extraidas.append(c)
+
+                            # 3. Completar con ranking estadístico si faltaron variables
+                            for c in ranking_estadistico:
+                                if len(cols_extraidas) >= k_features_auto:
+                                    break
+                                if c not in cols_extraidas:
+                                    cols_extraidas.append(c)
+
+                            cols_extraidas = cols_extraidas[:k_features_auto]
+
+                            m_exp = re.search(r'EXPLICACIÓN:\s*(.*)', texto_resp, re.DOTALL | re.I)
+                            explicacion_ia = m_exp.group(1).strip() if m_exp else texto_resp
+
+                            st.session_state["ms_features_selector"] = cols_extraidas
+                            st.session_state["selected_features"] = cols_extraidas
+                            st.session_state["ia_selection_explanation"] = f"**Criterio de {modelo_ia_feat}:** {explicacion_ia}"
+                            st.success(f"¡{modelo_ia_feat} seleccionó {len(cols_extraidas)} variables y las asignó al cajón!")
+                            st.rerun()
+                        else:
+                            st.error(f"Error HTTP {resp_ia.status_code} al conectar con Ollama: {resp_ia.text}")
+                    except Exception as err:
+                        st.error(f"No se pudo conectar con Ollama en `{url_ia_feat}`: {err}")
+
         with col_sel_f1:
             selected_features = st.multiselect(
                 "✅ Elige las columnas predictoras (Features) para entrenar:",
                 options=candidatas_todas,
-                default=current_selection,
                 key="ms_features_selector"
             )
             st.session_state["selected_features"] = selected_features
 
-        with col_sel_f2:
-            st.write("")
-            st.write("")
-            if st.button("🤖 Auto-Seleccionar por Estadística", help="Selecciona automáticamente las 5 variables con mayor correlación/asociación con el target"):
-                mejores = []
-                if num_cands:
-                    temp_num_a = df_train_stat[num_cands].copy()
-                    temp_num_a["__T__"] = y_train_stat
-                    rho_abs = temp_num_a.corr(method="spearman")["__T__"].drop("__T__").abs().dropna().sort_values(ascending=False)
-                    mejores.extend(list(rho_abs.head(4).index))
-                if cat_cands:
-                    mejores.append(cat_cands[0])
-                mejores = [c for c in mejores if c in candidatas_todas][:5]
-                if mejores:
-                    st.session_state["selected_features"] = mejores
-                    st.success(f"¡Seleccionadas automáticamente: {mejores}!")
-                    st.rerun()
+            if st.session_state.get("ia_selection_explanation"):
+                st.info(f"""💡 **Motivo de Selección:**
+
+{st.session_state['ia_selection_explanation']}""")
 
 # ==============================================================================
 # PASO 3: ENTRENAMIENTO MANUAL Y AUTOML (REPRODUCIBLE Y CON AYUDAS)
@@ -547,10 +698,17 @@ with tabs[2]:
                     st.caption("💡 *Neuronas:* Mayor cantidad permite aprender patrones complejos, pero requiere regularización para no sobreajustar.")
 
                     params_info["activation"] = st.selectbox("Función de Activación:", ["relu", "logistic", "tanh", "identity"])
-                    st.info("""📌 **Ayuda de Activación:**\n• **logistic (Sigmoide):** Produce curvas suaves entre 0 y 1. Ideal para estimar probabilidades.\n• **tanh:** Salidas centradas entre -1 y 1.\n• **relu:** Rápida y estándar en redes profundas.\n• **identity:** Transformación lineal directa.""")
+                    st.info("""📌 **Ayuda de Activación:**
+• **logistic (Sigmoide):** Produce curvas suaves entre 0 y 1. Ideal para estimar probabilidades.
+• **tanh:** Salidas centradas entre -1 y 1.
+• **relu:** Rápida y estándar en redes profundas.
+• **identity:** Transformación lineal directa.""")
 
                     params_info["solver"] = st.selectbox("Optimizador (Solver):", ["adam", "lbfgs", "sgd"])
-                    st.info("""📌 **Ayuda de Optimizador:**\n• **lbfgs:** Método matemático cuasi-Newton. Converge muy rápido y con alta exactitud en tablas medianas (< 10.000 filas).\n• **adam:** Descenso adaptativo por lotes, estándar para grandes volúmenes.\n• **sgd:** Descenso de gradiente clásico.""")
+                    st.info("""📌 **Ayuda de Optimizador:**
+• **lbfgs:** Método matemático cuasi-Newton. Converge muy rápido y con alta exactitud en tablas medianas (< 10.000 filas).
+• **adam:** Descenso adaptativo por lotes, estándar para grandes volúmenes.
+• **sgd:** Descenso de gradiente clásico.""")
 
                     params_info["alpha_reg"] = st.slider("Regularización L2 (alpha):", 0.0001, 0.1, 0.0001, 0.0005, format="%.4f")
                     params_info["epochs"] = st.slider("Épocas / Iteraciones Máximas:", 20, 300, 100, 10)
@@ -610,6 +768,7 @@ with tabs[2]:
                     X_tr_p = prep.fit_transform(X_tr)
                     X_te_p = prep.transform(X_te)
 
+                    # Instanciación reproducible de modelos
                     if tipo_modelo == "Regresión Logística":
                         model = LogisticRegression(C=params_info.get("C", 1.0), max_iter=500, random_state=42)
                         model.fit(X_tr_p, y_tr)
@@ -640,6 +799,7 @@ with tabs[2]:
                         model.compile(optimizer=keras.optimizers.Adam(learning_rate=params_info.get("lr", 0.01)), loss='binary_crossentropy')
                         model.fit(X_tr_p, y_tr, epochs=params_info.get("epochs", 80), batch_size=32, verbose=0)
                         preds_out = model.predict(X_te_p, verbose=0).ravel()
+                    # Regresión
                     elif tipo_modelo == "Regresión Lineal Penalizada (Ridge)":
                         model = Ridge(alpha=params_info.get("alpha", 1.0), random_state=42)
                         model.fit(X_tr_p, y_tr)
@@ -685,6 +845,7 @@ with tabs[2]:
 
             st.divider()
 
+            # --- SECCIÓN AUTOML (OPTUNA) ---
             st.subheader("⚡ Torneo AutoML con Búsqueda Automática (Optuna)")
             if not OPTUNA_AVAILABLE:
                 st.warning("Optuna no está disponible en este entorno. Puedes entrenar manualmente los modelos arriba o instalarlo con `pip install optuna`.")
@@ -861,73 +1022,88 @@ with tabs[3]:
 
         if es_clasificacion:
             st.subheader(f"📊 Evaluación de Clasificación: `{info_mod.get('modelo')}`")
-            if es_binaria:
-                c_th1, c_th2 = st.columns([2, 1])
-                with c_th1:
-                    threshold = st.slider("🎚️ Calibrar Umbral de Decisión en Vivo (Sin reentrenar):", 0.05, 0.95, 0.30, 0.05)
-                with c_th2:
-                    st.caption("Ajusta el corte de probabilidad para equilibrar Recall y Precisión.")
-                y_pred = (outputs >= threshold).astype(int)
-                avg_m = "binary"
-            else:
-                threshold = "Multiclase"
-                y_pred = outputs.astype(int)
-                avg_m = "macro"
+            labels_c = st.session_state.get("classes_labels", [str(i) for i in range(len(np.unique(y_test)))])
 
-            rec = recall_score(y_test, y_pred, average=avg_m, zero_division=0)
-            prec = precision_score(y_test, y_pred, average=avg_m, zero_division=0)
-            f1 = f1_score(y_test, y_pred, average=avg_m, zero_division=0)
-            acc = accuracy_score(y_test, y_pred)
-
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Recall (Sensibilidad)", f"{rec:.1%}")
-            k2.metric("Precisión", f"{prec:.1%}")
-            k3.metric("F1-Score", f"{f1:.3f}")
-            k4.metric("Exactitud (Accuracy)", f"{acc:.1%}")
-
-            col_g_clf1, col_g_clf2 = st.columns(2)
-            with col_g_clf1:
-                cm = confusion_matrix(y_test, y_pred)
-                labels_c = st.session_state.get("classes_labels", [str(i) for i in range(cm.shape[0])])
-                fig_cm = px.imshow(
-                    cm, text_auto=True,
-                    labels=dict(x="Predicción del Modelo", y="Clase Real", color="Casos"),
-                    x=[f"Pred: {l}" for l in labels_c],
-                    y=[f"Real: {l}" for l in labels_c],
-                    color_continuous_scale="Blues",
-                    title="Matriz de Confusión Interactiva (Plotly)",
-                    template="plotly_dark"
-                )
-                st.plotly_chart(fig_cm, use_container_width=True)
-
-            with col_g_clf2:
+            @reactive_block
+            def render_evaluacion_clasificacion(outputs, y_test, info_mod, es_binaria, labels_c):
                 if es_binaria:
-                    p_c, r_c, t_c = precision_recall_curve(y_test, outputs)
-                    fig_pr = go.Figure()
-                    fig_pr.add_trace(go.Scatter(x=t_c, y=r_c[:-1], mode='lines', name='Recall', line=dict(color='#38bdf8', width=3)))
-                    fig_pr.add_trace(go.Scatter(x=t_c, y=p_c[:-1], mode='lines', name='Precisión', line=dict(color='#f59e0b', width=3)))
-                    fig_pr.add_vline(x=threshold, line_dash="dot", line_color="#10b981", annotation_text=f"Umbral ({threshold:.2f})")
-                    fig_pr.update_layout(
-                        title="Curva Interactiva Recall vs. Precisión",
-                        xaxis_title="Umbral de Probabilidad",
-                        yaxis_title="Valor de la Métrica",
+                    c_th1, c_th2 = st.columns([2, 1])
+                    with c_th1:
+                        threshold = st.slider(
+                            "🎚️ Calibrar Umbral de Decisión en Vivo (Continuo):",
+                            min_value=0.01,
+                            max_value=0.99,
+                            value=float(st.session_state.get("decision_threshold", 0.30)),
+                            step=0.005,
+                            format="%.3f",
+                            help="Desliza suavemente para ajustar de forma continua el corte de decisión y recalcular las métricas al instante."
+                        )
+                        st.session_state["decision_threshold"] = threshold
+                    with c_th2:
+                        st.caption(f"Corte activo: **{threshold:.1%}** (`{threshold:.3f}`)")
+                        st.caption("Ajusta el corte de probabilidad para equilibrar Recall y Precisión en tiempo real.")
+                    y_pred = (outputs >= threshold).astype(int)
+                    avg_m = "binary"
+                else:
+                    threshold = "Multiclase"
+                    y_pred = outputs.astype(int)
+                    avg_m = "macro"
+
+                rec = recall_score(y_test, y_pred, average=avg_m, zero_division=0)
+                prec = precision_score(y_test, y_pred, average=avg_m, zero_division=0)
+                f1 = f1_score(y_test, y_pred, average=avg_m, zero_division=0)
+                acc = accuracy_score(y_test, y_pred)
+
+                k1, k2, k3, k4 = st.columns(4)
+                k1.metric("Recall (Sensibilidad)", f"{rec:.1%}")
+                k2.metric("Precisión", f"{prec:.1%}")
+                k3.metric("F1-Score", f"{f1:.3f}")
+                k4.metric("Exactitud (Accuracy)", f"{acc:.1%}")
+
+                col_g_clf1, col_g_clf2 = st.columns(2)
+                with col_g_clf1:
+                    cm = confusion_matrix(y_test, y_pred)
+                    fig_cm = px.imshow(
+                        cm, text_auto=True,
+                        labels=dict(x="Predicción del Modelo", y="Clase Real", color="Casos"),
+                        x=[f"Pred: {l}" for l in labels_c],
+                        y=[f"Real: {l}" for l in labels_c],
+                        color_continuous_scale="Blues",
+                        title="Matriz de Confusión Interactiva (Plotly)",
                         template="plotly_dark"
                     )
-                    st.plotly_chart(fig_pr, use_container_width=True)
+                    st.plotly_chart(fig_cm, use_container_width=True)
 
-            if st.button("💾 Guardar Experimento en Historial de Clasificación", type="primary"):
-                st.session_state.historial_clf.append({
-                    "#": len(st.session_state.historial_clf) + 1,
-                    "Modelo": info_mod.get("modelo"),
-                    "Umbral": threshold,
-                    "Recall": f"{rec:.1%}",
-                    "Precisión": f"{prec:.1%}",
-                    "F1": round(f1, 3),
-                    "Accuracy": f"{acc:.1%}",
-                    "Hiperparámetros": info_mod.get("config"),
-                    "Predictoras": ", ".join(info_mod.get("features", []))
-                })
-                st.success("Guardado en el historial de Clasificación.")
+                with col_g_clf2:
+                    if es_binaria:
+                        p_c, r_c, t_c = precision_recall_curve(y_test, outputs)
+                        fig_pr = go.Figure()
+                        fig_pr.add_trace(go.Scatter(x=t_c, y=r_c[:-1], mode='lines', name='Recall', line=dict(color='#38bdf8', width=3)))
+                        fig_pr.add_trace(go.Scatter(x=t_c, y=p_c[:-1], mode='lines', name='Precisión', line=dict(color='#f59e0b', width=3)))
+                        fig_pr.add_vline(x=threshold, line_dash="dot", line_color="#10b981", annotation_text=f"Umbral ({threshold:.3f})")
+                        fig_pr.update_layout(
+                            title="Curva Interactiva Recall vs. Precisión",
+                            xaxis_title="Umbral de Probabilidad",
+                            yaxis_title="Valor de la Métrica",
+                            template="plotly_dark"
+                        )
+                        st.plotly_chart(fig_pr, use_container_width=True)
+
+                if st.button("💾 Guardar Experimento en Historial de Clasificación", type="primary"):
+                    st.session_state.historial_clf.append({
+                        "#": len(st.session_state.historial_clf) + 1,
+                        "Modelo": info_mod.get("modelo"),
+                        "Umbral": round(threshold, 3) if isinstance(threshold, (int, float)) else threshold,
+                        "Recall": f"{rec:.1%}",
+                        "Precisión": f"{prec:.1%}",
+                        "F1": round(f1, 3),
+                        "Accuracy": f"{acc:.1%}",
+                        "Hiperparámetros": info_mod.get("config"),
+                        "Predictoras": ", ".join(info_mod.get("features", []))
+                    })
+                    st.success("Guardado en el historial de Clasificación.")
+
+            render_evaluacion_clasificacion(outputs, y_test, info_mod, es_binaria, labels_c)
 
         else:
             st.subheader(f"📈 Evaluación de Regresión: `{info_mod.get('modelo')}`")
@@ -994,37 +1170,50 @@ with tabs[3]:
 
         st.divider()
 
-        st.subheader("🦙 Veredicto Técnico con LLM Local (Ollama)")
+        st.subheader("🦙 Veredicto Técnico y Auditoría de Producción con LLM Local (Ollama)")
         c_ll1, c_ll2, c_ll3 = st.columns([1.5, 1.5, 1])
         with c_ll1:
             modelos_ollama = [
-                "deepseek-r1:1.5b", "qwen3:4b", "gemma3:4b", "qwen2.5:7b",
-                "llama3.1:8b", "petronetto/mimo-v2.6-9b", "phi4-mini", "qwen3:30b"
+                "deepseek-r1:1.5b", "qwen2.5:7b", "llama3.1:8b", "qwen3:4b", "gemma3:4b",
+                "petronetto/mimo-v2.6-9b", "phi4-mini", "qwen3:30b"
             ]
             modelo_ollama = st.selectbox("Modelo de Ollama:", modelos_ollama)
         with c_ll2:
             ollama_url = st.text_input("URL Servidor Ollama:", value="http://localhost:11434")
         with c_ll3:
-            max_tokens_llm = st.slider("Máximo de Tokens:", 150, 500, 350, 50)
+            max_tokens_llm = st.slider("Máximo de Tokens:", 200, 700, 450, 50)
 
         if st.button("🧠 Emitir Veredicto sobre el Historial Activo", type="primary"):
             if not historial_activo:
                 st.warning("Guarda al menos un experimento en el historial o corre AutoML antes de consultar al LLM.")
             else:
-                with st.spinner(f"Analizando historial con {modelo_ollama}..."):
+                with st.spinner(f"Auditando historial con {modelo_ollama}..."):
                     tabla_str = pd.DataFrame(historial_activo).to_string(index=False)
                     tarea_txt = "Clasificación" if es_clasificacion else "Regresión"
                     target_col = st.session_state.get("target_col", "Target")
-                    prompt_llm = f"""Eres un especialista en Ciencia de Datos.
+                    
+                    prompt_llm = f"""Eres un Ingeniero Principal de Machine Learning y Auditor de Modelos.
 Tipo de problema: {tarea_txt} sobre la variable objetivo '{target_col}'.
-Tabla de experimentos:
+
+Historial de experimentos y métricas:
 {tabla_str}
 
-Instrucciones:
-1. Compara los modelos de la tabla.
-2. Declara cuál es el MODELO GANADOR citando sus métricas exactas.
-3. Evalúa si es adecuado para tomar decisiones operativas.
-Responde directo en español en menos de {max_tokens_llm} tokens."""
+Genera un veredicto técnico riguroso respondiendo punto por punto con esta estructura exacta:
+
+1. 🏆 MODELO GANADOR Y JUSTIFICACIÓN:
+- Declara el mejor modelo citando sus métricas numéricas exactas de la tabla.
+- Explica la razón técnica de la elección comparando el balance entre métricas (ej. Recall vs. Precisión y F1 para clasificación, o equilibrio entre MAE, RMSE y R² para regresión).
+
+2. 🚦 DICTAMEN DE PRODUCCIÓN (Elige una opción tajante: [APTO PARA PRODUCCIÓN] o [NO APTO / REQUIERE AJUSTES]):
+- Argumenta si las métricas alcanzadas son operativamente seguras para tomar decisiones de negocio automatizadas en vivo.
+- Advierte riesgos: evalúa si existen métricas sospechosamente perfectas (100% de Recall o Accuracy, señal de sobreajuste o data leakage) o errores inadmisibles.
+
+3. 🔍 DIAGNÓSTICO DE VARIABLES Y PRÓXIMOS PASOS:
+- Analiza las variables predictoras (Features) utilizadas en los experimentos de la tabla.
+- Dictamina si el conjunto actual de variables es suficiente o si se recomienda probar nuevas combinaciones, transformar variables existentes o eliminar predictoras redundantes antes de desplegar.
+
+Sé directo, crítico y conciso. Máximo {max_tokens_llm} tokens en español."""
+
                     try:
                         resp = requests.post(
                             f"{ollama_url.rstrip('/')}/api/generate",
@@ -1039,7 +1228,9 @@ Responde directo en español en menos de {max_tokens_llm} tokens."""
                         st.error(f"No se pudo conectar con Ollama en `{ollama_url}`: {e}")
 
         if st.session_state.veredicto_llm:
-            st.info(f"**Veredicto de {modelo_ollama}:**\n\n{st.session_state.veredicto_llm}")
+            st.info(f"""**Veredicto de {modelo_ollama}:**
+
+{st.session_state.veredicto_llm}""")
 
 # ==============================================================================
 # PASO 5: PRODUCCIÓN
@@ -1079,10 +1270,11 @@ with tabs[4]:
             if es_clf:
                 p = float(mod.predict_proba(X_np)[0, 1]) if hasattr(mod, "predict_proba") else float(mod.predict(X_np)[0])
                 st.metric("Probabilidad Estimada (Clase Positiva)", f"{p:.1%}")
-                if p >= 0.30:
-                    st.error("⚠️ **ALERTA PREVENTIVA:** El caso supera el umbral de decisión (0.30).")
+                umbral_prod = float(st.session_state.get("decision_threshold", 0.30))
+                if p >= umbral_prod:
+                    st.error(f"⚠️ **ALERTA PREVENTIVA:** El caso supera el umbral de decisión calibrado ({umbral_prod:.1%}).")
                 else:
-                    st.success("✅ **BAJO RIESGO / NORMAL:** El caso se encuentra dentro de los parámetros normales.")
+                    st.success(f"✅ **BAJO RIESGO / NORMAL:** La probabilidad estimada ({p:.1%}) está por debajo del umbral ({umbral_prod:.1%}).")
             else:
                 v = float(np.ravel(mod.predict(X_np))[0])
                 st.metric("Valor Estimado", f"{v:,.2f}")
