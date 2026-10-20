@@ -1,0 +1,140 @@
+{
+    "modelos": {
+        "Regresión Logística": {
+            "desc": "Clasificador lineal probabilístico basado en la función sigmoide.",
+            "propósito": "Excelente para problemas binarios con fronteras lineales. Es explicable, veloz y el estándar para calibrar umbrales de decisión.",
+            "cuando_usar": "Como modelo base rápido, interpretable y cuando se requiere estimar probabilidades bien calibradas."
+        },
+        "K-Vecinos Cercanos (KNN Clasificador)": {
+            "desc": "Clasifica según el voto por mayoría de los 'K' registros más cercanos en el espacio métrico.",
+            "propósito": "Captura patrones locales complejos sin asumir fórmulas matemáticas rígidas.",
+            "cuando_usar": "Cuando las variables numéricas están normalizadas y existen agrupaciones espaciales marcadas."
+        },
+        "Árbol de Decisión (Clasificador)": {
+            "desc": "Construye un conjunto de reglas jerárquicas tipo diagrama de flujo (Si/Entonces).",
+            "propósito": "Máxima transparencia e interpretabilidad para explicar el porqué de cada decisión.",
+            "cuando_usar": "Cuando se necesita justificar cada decisión ante auditorías o normativas regulatorias."
+        },
+        "Random Forest (Clasificador)": {
+            "desc": "Ensamble de múltiples árboles de decisión independientes entrenados con submuestras aleatorias (Bagging).",
+            "propósito": "Reduce drásticamente el sobreajuste (overfitting) de los árboles individuales manteniendo altísima precisión.",
+            "cuando_usar": "Algoritmo de referencia para tablas de datos generales con interacciones complejas."
+        },
+        "HistGradientBoosting (Clasificador)": {
+            "desc": "Implementación moderna de árboles de decisión por potenciación de gradiente optimizada por histogramas (similar a LightGBM).",
+            "propósito": "Altísima velocidad de entrenamiento y precisión superior en tablas medianas y grandes con valores nulos.",
+            "cuando_usar": "Cuando buscas el máximo rendimiento predictivo en tareas de clasificación tabular."
+        },
+        "Red Neuronal (MLP Classifier)": {
+            "desc": "Perceptrón Multicapa con capas densas conectadas mediante activaciones no lineales.",
+            "propósito": "Aprende interacciones complejas de alto orden entre múltiples variables.",
+            "cuando_usar": "Cuando el volumen de datos es suficiente y existen relaciones altamente no lineales."
+        },
+        "Red Neuronal (TensorFlow/Keras Clasificador)": {
+            "desc": "Red neuronal profunda implementada en TensorFlow/Keras con salida sigmoide.",
+            "propósito": "Modelado profundo con optimización Adam por mini-lotes y función de pérdida binary_crossentropy.",
+            "cuando_usar": "Cuando se desea experimentar con arquitecturas profundas y control fino por épocas de aprendizaje."
+        },
+        "Regresión Lineal Penalizada (Ridge)": {
+            "desc": "Estimador numérico continuo con regularización L2 (Tikhonov) sobre los coeficientes.",
+            "propósito": "Estimar valores continuos controlando la multicolinealidad y evitando pesos extremos.",
+            "cuando_usar": "Como modelo base robusto para predecir importes, ingresos o precios continuos."
+        },
+        "K-Vecinos Cercanos (KNN Regresor)": {
+            "desc": "Estima un valor numérico continuo promediando las etiquetas de los 'K' casos más cercanos.",
+            "propósito": "Predicciones por analogía directa con casos históricos similares.",
+            "cuando_usar": "Para tasaciones, precios inmobiliarios o estimaciones locales."
+        },
+        "Árbol de Decisión (Regresor)": {
+            "desc": "Particiona el espacio de predictoras en regiones homogéneas y asigna el promedio numérico de cada hoja.",
+            "propósito": "Captura umbrales de corte escalonados de forma interpretable.",
+            "cuando_usar": "Para segmentaciones numéricas explicables."
+        },
+        "Random Forest (Regresor)": {
+            "desc": "Promedia la estimación numérica de un bosque de árboles de decisión independientes.",
+            "propósito": "Reduce la varianza y entrega estimaciones continuas muy estables y precisas.",
+            "cuando_usar": "Para predecir montos monetarios, volúmenes de venta o variables cuantitativas con alta precisión."
+        },
+        "HistGradientBoosting (Regresor)": {
+            "desc": "Potenciación de gradiente por histogramas para estimación numérica continua rápida.",
+            "propósito": "Minimizar el error cuadrático o absoluto medio de manera muy eficiente.",
+            "cuando_usar": "Cuando se requiere potencia máxima y velocidad en regresión tabular."
+        },
+        "Red Neuronal (MLP Regressor)": {
+            "desc": "Perceptrón Multicapa con salida continua lineal.",
+            "propósito": "Aprender funciones de regresión continuas altamente no lineales.",
+            "cuando_usar": "Para modelar superficies de respuesta continuas intrincadas."
+        },
+        "Red Neuronal (TensorFlow/Keras Regresor)": {
+            "desc": "Red neuronal densa en Keras con salida lineal sin activación y pérdida MSE.",
+            "propósito": "Ajuste continuo profundo optimizado mediante gradiente descendente.",
+            "cuando_usar": "Para experimentar con redes profundas en tareas de estimación numérica continua."
+        }
+    },
+    "parametros": {
+        "neurons": {
+            "titulo": "Neuronas en Capa Oculta",
+            "ayuda": "Cantidad de nodos de procesamiento en la capa interna. Valores altos capturan patrones intrincados pero aumentan el riesgo de sobreajuste si la muestra es pequeña. Valores típicos: 8 a 32."
+        },
+        "activation": {
+            "titulo": "Función de Activación",
+            "ayuda": "Define cómo transforma la señal cada neurona:\n• logistic (Sigmoide): Salidas suaves entre 0 y 1. Ideal para estimar probabilidades de riesgo.\n• tanh: Salidas entre -1 y 1. Centra los datos y suele acelerar la convergencia.\n• relu: Rectificador lineal estándar (max(0, x)). Muy rápida para redes profundas.\n• identity: Función lineal f(x)=x, útil para evaluar relaciones lineales directas."
+        },
+        "solver": {
+            "titulo": "Optimizador (Solver)",
+            "ayuda": "Algoritmo para calcular y actualizar los pesos:\n• lbfgs: Optimizador cuasi-Newton de memoria limitada. Converge más rápido y con mayor precisión en datasets tabulares pequeños o medianos (< 10.000 filas).\n• adam: Gradiente estocástico adaptativo con momentos. Estándar para conjuntos medianos y grandes.\n• sgd: Descenso de gradiente estocástico clásico con tasa fija."
+        },
+        "alpha_reg": {
+            "titulo": "Regularización L2 (Alpha en Redes)",
+            "ayuda": "Penaliza la magnitud de los pesos en la función de costo de la red neuronal. Evita que la red memorice el ruido de entrenamiento (overfitting). Valores recomendados: 0.0001 a 0.01."
+        },
+        "epochs": {
+            "titulo": "Épocas / Iteraciones Máximas",
+            "ayuda": "Cantidad total de pasadas completas que hace el algoritmo sobre todo el dataset de entrenamiento antes de detenerse."
+        },
+        "lr": {
+            "titulo": "Tasa de Aprendizaje (Learning Rate)",
+            "ayuda": "Magnitud del paso que da el optimizador al actualizar los pesos en cada iteración. Valores muy altos causan divergencia; valores muy bajos hacen el entrenamiento excesivamente lento."
+        },
+        "learning_rate": {
+            "titulo": "Tasa de Aprendizaje (Boosting)",
+            "ayuda": "Ponderación con la que cada árbol nuevo corrige los errores de los anteriores. Valores menores (0.01 a 0.05) con más árboles suelen dar mejor generalización."
+        },
+        "max_iter": {
+            "titulo": "Cantidad de Árboles (max_iter en Boosting)",
+            "ayuda": "Número total de iteraciones secuenciales de boosting construidas sucesivamente."
+        },
+        "max_depth": {
+            "titulo": "Profundidad Máxima del Árbol",
+            "ayuda": "Límite en la cantidad de niveles o preguntas jerárquicas que puede formular cada árbol. Valores pequeños (3 a 6) previenen el sobreajuste."
+        },
+        "n_estimators": {
+            "titulo": "Cantidad de Árboles (Random Forest)",
+            "ayuda": "Número de árboles independientes que componen el bosque. A mayor cantidad, mayor estabilidad estadística en la predicción final (valores típicos: 50 a 150)."
+        },
+        "C": {
+            "titulo": "Fuerza de Regularización Inversa (C en Regresión Logística)",
+            "ayuda": "Controla la regularización: C pequeño (ej. 0.01) impone penalización fuerte forzando coeficientes chicos y simples; C grande (ej. 5.0 o 10.0) permite al modelo ajustarse más a los datos."
+        },
+        "alpha": {
+            "titulo": "Penalización L2 (Alpha en Ridge)",
+            "ayuda": "Intensidad de la penalización sobre los coeficientes de regresión. Controla la multicolinealidad y reduce la varianza de la estimación."
+        },
+        "K": {
+            "titulo": "Cantidad de Vecinos (K en KNN)",
+            "ayuda": "Número de registros históricos más cercanos que votan (en clasificación) o se promedian (en regresión). K bajo puede sobreajustar; K alto suaviza las fronteras de decisión."
+        }
+    },
+    "guia": {
+        "clasificacion": {
+            "titulo": "Problemas de Clasificación",
+            "descripcion": "Se utilizan cuando la variable objetivo a predecir es una categoría discreta (ej.: Aprobado/Rechazado, Cliente Moroso/Al Día, Categoría A/B/C). El modelo estima probabilidades entre 0.0 y 1.0 y aplica un Umbral de Decisión.",
+            "metricas": "Recall (Sensibilidad), Precisión, F1-Score, Exactitud (Accuracy), Matriz de Confusión y Curva Precision-Recall."
+        },
+        "regresion": {
+            "titulo": "Problemas de Regresión (Estimación de Magnitudes)",
+            "descripcion": "Se utilizan cuando la variable objetivo es una cantidad numérica continua (ej.: ingresos mensuales, importe otorgado, plazo en días, valuación). El modelo predice directamente la magnitud numérica esperada.",
+            "metricas": "MAE (Error Absoluto Medio), RMSE (Raíz del Error Cuadrático Medio), R² (Coeficiente de Determinación) y MAPE (Error Porcentual Absoluto Medio)."
+        }
+    }
+}
